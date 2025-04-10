@@ -1553,20 +1553,57 @@
             
             // Render blocks
             function renderBlocks() {
-                const blocksContainer = document.getElementById('blocksContainer');
-                blocksContainer.innerHTML = '';
-                
-                blockchain.chain.forEach(block => {
-                    const blockElement = document.createElement('div');
-                    blockElement.className = 'block';
-                    blockElement.innerHTML = `
-                        <div class="block-header">Bloc #${block.index}</div>
-                        <div>Hash: ${block.hash.substring(0, 20)}...</div>
-                        <div>Transactions: ${block.data.transactions.length}</div>
-                    `;
-                    blocksContainer.appendChild(blockElement);
-                });
-            }
+    blocksContainer.innerHTML = '';
+    
+    // Inverser l'ordre pour afficher les plus récents en premier
+    const reversedChain = [...blockchain.chain].reverse();
+    
+    reversedChain.forEach(block => {
+        const blockElement = document.createElement('div');
+        blockElement.className = 'block';
+        
+        const blockHeader = document.createElement('div');
+        blockHeader.className = 'block-header';
+        blockHeader.textContent = `Bloc #${block.index}`;
+        
+        const blockHash = document.createElement('div');
+        blockHash.textContent = `Hash: ${block.hash.substring(0, 16)}...`;
+        
+        const blockPrevHash = document.createElement('div');
+        blockPrevHash.textContent = `Hash précédent: ${block.previousHash.substring(0, 10)}...`;
+        
+        const blockTime = document.createElement('div');
+        blockTime.textContent = `Horodatage: ${new Date(block.timestamp).toLocaleString()}`;
+        
+        blockElement.appendChild(blockHeader);
+        blockElement.appendChild(blockHash);
+        blockElement.appendChild(blockPrevHash);
+        blockElement.appendChild(blockTime);
+        
+        // Ajouter les transactions
+        if (block.data && block.data.transactions && block.data.transactions.length > 0) {
+            const transactionsTitle = document.createElement('div');
+            transactionsTitle.textContent = 'Transactions:';
+            transactionsTitle.style.marginTop = '10px';
+            transactionsTitle.style.fontWeight = 'bold';
+            blockElement.appendChild(transactionsTitle);
+            
+            const transactionsContainer = document.createElement('div');
+            transactionsContainer.className = 'transactions';
+            
+            block.data.transactions.forEach(tx => {
+                const txElement = document.createElement('div');
+                txElement.className = 'transaction';
+                txElement.textContent = `${tx.sender.substring(0, 8)}... → ${tx.recipient.substring(0, 8)}...: ${tx.amount} tokens`;
+                transactionsContainer.appendChild(txElement);
+            });
+            
+            blockElement.appendChild(transactionsContainer);
+        }
+        
+        blocksContainer.appendChild(blockElement);
+    });
+}
 
             // Initialize the application
             initialize();
