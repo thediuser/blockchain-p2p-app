@@ -602,6 +602,23 @@ class P2PNetwork {
         const wsUrl = 'wss://dolomite-succinct-damselfly.glitch.me';
         
         console.log(`Connexion au serveur de signalisation: ${wsUrl}`);
+        try {
+        this.signalingSocket = new WebSocket(wsUrl);
+        
+        this.signalingSocket.onopen = () => {
+            console.log('✅ Connexion réussie au serveur de signalisation');
+            // ...
+        };
+        
+        this.signalingSocket.onerror = (error) => {
+            console.error('❌ Erreur de connexion WebSocket:', error);
+            // ...
+        };
+        
+        // ...
+    } catch (e) {
+        console.error('❌ Exception lors de la création du WebSocket:', e);
+    }
         this.signalingSocket = new WebSocket(wsUrl);
         
         // Gérer les événements du serveur de signalisation
