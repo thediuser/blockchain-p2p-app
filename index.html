@@ -599,60 +599,18 @@
     
          // Connexion au serveur de signalisation
         initSignaling() {
-        // Remplacer par l'URL de votre serveur Glitch
+    try {
         const wsUrl = 'wss://dolomite-succinct-damselfly.glitch.me';
+        console.log('Connexion WebSocket:', wsUrl);
         
-        console.log(`Connexion au serveur de signalisation: ${wsUrl}`);
-        try {
         this.signalingSocket = new WebSocket(wsUrl);
-        
-        this.signalingSocket.onopen = () => {
-            console.log('✅ Connexion réussie au serveur de signalisation');
-            // ...
-        };
-        
         this.signalingSocket.onerror = (error) => {
-            console.error('❌ Erreur de connexion WebSocket:', error);
-            // ...
+            console.error('Erreur WebSocket:', error);
         };
-        
-        // ...
-        } catch (e) {
-        console.error('❌ Exception lors de la création du WebSocket:', e);
-        }
-        this.signalingSocket = new WebSocket(wsUrl);
-        
-        // Gérer les événements du serveur de signalisation
-        this.signalingSocket.onopen = () => {
-            console.log('Connexion établie avec le serveur de signalisation');
-            this.connected = true;
-            this.onPeersUpdate(0, true);
-            this.register();
-        };
-        
-        this.signalingSocket.onmessage = (event) => {
-            try {
-                const data = JSON.parse(event.data);
-                this.handleSignalingMessage(data);
-            } catch (error) {
-                console.error('Erreur lors du traitement du message de signalisation:', error);
-            }
-        };
-        
-        this.signalingSocket.onclose = () => {
-            console.log('Connexion au serveur de signalisation fermée');
-            this.connected = false;
-            this.onPeersUpdate(0, false);
-            // Tenter de se reconnecter après un délai
-            setTimeout(() => this.initSignaling(), 5000);
-        };
-        
-        this.signalingSocket.onerror = (error) => {
-            console.error('Erreur de connexion au serveur de signalisation:', error);
-            this.connected = false;
-            this.onPeersUpdate(0, false);
-        };
-        }
+    } catch (error) {
+        console.error('Erreur initSignaling:', error);
+    }
+}
     
     // S'enregistrer auprès du serveur de signalisation
     register() {
@@ -1066,29 +1024,13 @@
         
         switch (message.type) {
             case 'request_blockchain':
-                // Un pair demande notre blockchain
                 this.handleBlockchainRequest(message, peerId);
                 break;
-                
             case 'blockchain_data':
-                // Réception de données blockchain
                 this.handleBlockchainData(message, peerId);
                 break;
-                
-            case 'new_transaction':
-                // Réception d'une nouvelle transaction
-                this.handleNewTransaction(message, peerId);
-                break;
-                
-            case 'new_block':
-                // Réception d'un nouveau bloc
-                this.handleNewBlock(message, peerId);
-                break;
-                
-            case 'mining_intent':
-                // Un pair veut miner un bloc
-                this.handleMiningIntent(message, peerId);
-                break;
+            default:
+                console.log('Type de message inconnu:', message.type);
         }
     }
     
@@ -1449,6 +1391,10 @@
 
         // Initialisation de l'application
         document.addEventListener('DOMContentLoaded', () => {
+            if (typeof CryptoJS === 'undefined') {
+                console.error('CryptoJS n\'est pas chargé!');
+                return;
+            }
             // Éléments DOM
             const walletIdElement = document.getElementById('walletId');
             const walletKeyElement = document.getElementById('walletKey');
@@ -1490,60 +1436,65 @@
             
             // Initialisation
             function initialize() {
-                // Essayer de charger le portefeuille depuis le stockage local
-                const storedWallet = localStorage.getItem('wallet');
-                if (storedWallet) {
-                    try {
-                        const walletData = JSON.parse(storedWallet);
-                        wallet.id = walletData.id;
-                        wallet.privateKey = walletData.privateKey;
-                    } catch (e) {
-                        console.error('Erreur lors du chargement du portefeuille:', e);
-                        // Générer un nouveau portefeuille en cas d'erreur
+                console.log('Initialisation...');
+                try {
+                    // Essayer de charger le portefeuille depuis le stockage local
+                    const storedWallet = localStorage.getItem('wallet');
+                    if (storedWallet) {
+                        try {
+                            const walletData = JSON.parse(storedWallet);
+                            wallet.id = walletData.id;
+                            wallet.privateKey = walletData.privateKey;
+                        } catch (e) {
+                            console.error('Erreur lors du chargement du portefeuille:', e);
+                            // Générer un nouveau portefeuille en cas d'erreur
+                            wallet.generate();
+                            saveWallet();
+                        }
+                    } else {
+                        // Générer un nouveau portefeuille
                         wallet.generate();
                         saveWallet();
                     }
-                } else {
-                    // Générer un nouveau portefeuille
-                    wallet.generate();
-                    saveWallet();
-                }
-                
-                // Afficher l'ID du portefeuille
-                walletIdElement.textContent = wallet.id;
-                walletKeyElement.textContent = wallet.privateKey;
-                
-                // Charger la blockchain si elle existe
-                const storedChain = localStorage.getItem('blockchain');
-                if (storedChain) {
-                    try {
-                        const parsedData = JSON.parse(storedChain);
-                        blockchain.chain = parsedData.chain;
-                        blockchain.pendingTransactions = parsedData.pendingTransactions;
-                        blockchain.difficulty = parsedData.difficulty;
-                    } catch (e) {
-                        console.error('Erreur lors du chargement de la blockchain:', e);
-                        // Créer une nouvelle blockchain en cas d'erreur
-                        blockchain = new Blockchain();
+                    
+                    // Afficher l'ID du portefeuille
+                    walletIdElement.textContent = wallet.id;
+                    walletKeyElement.textContent = wallet.privateKey;
+                    
+                    // Charger la blockchain si elle existe
+                    const storedChain = localStorage.getItem('blockchain');
+                    if (storedChain) {
+                        try {
+                            const parsedData = JSON.parse(storedChain);
+                            blockchain.chain = parsedData.chain;
+                            blockchain.pendingTransactions = parsedData.pendingTransactions;
+                            blockchain.difficulty = parsedData.difficulty;
+                        } catch (e) {
+                            console.error('Erreur lors du chargement de la blockchain:', e);
+                            // Créer une nouvelle blockchain en cas d'erreur
+                            blockchain = new Blockchain();
+                        }
+                    } else {
+                        // Donner des fonds initiaux au nouvel utilisateur
+                        blockchain.createTransaction('Système', wallet.id, 10);
+                        blockchain.minePendingTransactions('system');
+                        saveBlockchain();
                     }
-                } else {
-                    // Donner des fonds initiaux au nouvel utilisateur
-                    blockchain.createTransaction('Système', wallet.id, 10);
-                    blockchain.minePendingTransactions('system');
-                    saveBlockchain();
+                    
+                    // Initialiser le réseau P2P
+                    p2pNetwork = new P2PNetwork(
+                        wallet, 
+                        blockchain, 
+                        onChainUpdate, 
+                        onTransactionReceived,
+                        onPeersUpdate
+                    );
+                    
+                    // Mettre à jour l'interface
+                    updateUI();
+                } catch (error) {
+                    console.error('Erreur d\'initialisation:', error);
                 }
-                
-                // Initialiser le réseau P2P
-                p2pNetwork = new P2PNetwork(
-                    wallet, 
-                    blockchain, 
-                    onChainUpdate, 
-                    onTransactionReceived,
-                    onPeersUpdate
-                );
-                
-                // Mettre à jour l'interface
-                updateUI();
             }
             
             // Callback quand la blockchain est mise à jour
@@ -1600,7 +1551,26 @@
                 renderBlocks();
             }
             
+            // Render blocks
+            function renderBlocks() {
+                const blocksContainer = document.getElementById('blocksContainer');
+                blocksContainer.innerHTML = '';
+                
+                blockchain.chain.forEach(block => {
+                    const blockElement = document.createElement('div');
+                    blockElement.className = 'block';
+                    blockElement.innerHTML = `
+                        <div class="block-header">Bloc #${block.index}</div>
+                        <div>Hash: ${block.hash.substring(0, 20)}...</div>
+                        <div>Transactions: ${block.data.transactions.length}</div>
+                    `;
+                    blocksContainer.appendChild(blockElement);
+                });
+            }
+
             // Initialize the application
             initialize();
         });
     </script>
+</body>
+</html>
