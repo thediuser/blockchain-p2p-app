@@ -593,9 +593,10 @@
             
             // Connexion au serveur de signalisation
             initSignaling() {
-                // Dans un vrai déploiement, vous utiliseriez l'URL de votre serveur de signalisation
-                // Pour cette démo, nous simulons une connexion réussie
-                console.log(`Connexion au serveur de signalisation...`);
+                const wsUrl = 'wss://your-project-name.glitch.me';
+    
+    console.log(`Connexion au serveur de signalisation: ${wsUrl}`);
+    this.signalingSocket = new WebSocket(wsUrl);
                 
                 // Simuler une connexion réussie après un court délai
                 setTimeout(() => {
