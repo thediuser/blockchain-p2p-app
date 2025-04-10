@@ -565,127 +565,869 @@
         }
 
         // Classe P2PNetwork pour gérer les connexions peer-to-peer
-        class P2PNetwork {
-            constructor(wallet, blockchain, onChainUpdate, onTransactionReceived, onPeersUpdate) {
-                this.wallet = wallet;
-                this.blockchain = blockchain;
-                this.onChainUpdate = onChainUpdate;
-                this.onTransactionReceived = onTransactionReceived;
-                this.onPeersUpdate = onPeersUpdate;
+class P2PNetwork {
+    constructor(wallet, blockchain, onChainUpdate, onTransactionReceived, onPeersUpdate) {
+        this.wallet = wallet;
+        this.blockchain = blockchain;
+        this.onChainUpdate = onChainUpdate;
+        this.onTransactionReceived = onTransactionReceived;
+        this.onPeersUpdate = onPeersUpdate;
+        
+        this.peers = new Map(); // peerId -> { connection, dataChannel }
+        this.pendingIceCandidates = new Map(); // peerId -> [ice candidates]
+        
+        this.mining = false;
+        this.connected = false;
+        
+        // Configuration WebRTC avec serveurs STUN/TURN pour traverser les NAT
+        this.rtcConfig = {
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' },
+                { urls: 'stun:stun2.l.google.com:19302' },
+                { urls: 'stun:stun3.l.google.com:19302' },
+                { urls: 'stun:stun4.l.google.com:19302' }
+                // Dans une application de production, vous devriez ajouter un serveur TURN
+                // { urls: 'turn:turn.example.org', username: 'user', credential: 'pass' }
+            ]
+        };
+        
+        // Connexion au serveur de signalisation
+        this.initSignaling();
+    }
+    
+    // Connexion au serveur de signalisation
+    initSignaling() {
+        // Remplacer par l'URL de votre serveur Glitch
+        const wsUrl = 'wss://dolomite-succinct-damselfly.glitch.me';
+        
+        console.log(`Connexion au serveur de signalisation: ${wsUrl}`);
+        this.signalingSocket = new WebSocket(wsUrl);
+        
+        // Gérer les événements du serveur de signalisation
+        this.signalingSocket.onopen = () => {
+            console.log('Connexion établie avec le serveur de signalisation');
+            this.connected = true;
+            this.onPeersUpdate(0, true);
+            this.register();
+        };
+        
+        this.signalingSocket.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                this.handleSignalingMessage(data);
+            } catch (error) {
+                console.error('Erreur lors du traitement du message de signalisation:', error);
+            }
+        };
+        
+        this.signalingSocket.onclose = () => {
+            console.log('Connexion au serveur de signalisation fermée');
+            this.connected = false;
+            this.onPeersUpdate(0, false);
+            // Tenter de se reconnecter après un délai
+            setTimeout(() => this.initSignaling(), 5000);
+        };
+        
+        this.signalingSocket.onerror = (error) => {
+            console.error('Erreur de connexion au serveur de signalisation:', error);
+            this.connected = false;
+            this.onPeersUpdate(0, false);
+        };
+    }
+    
+    // S'enregistrer auprès du serveur de signalisation
+    register() {
+        if (this.signalingSocket.readyState === WebSocket.OPEN) {
+            this.signalingSocket.send(JSON.stringify({
+                type: 'register',
+                nodeId: this.wallet.id
+            }));
+        }
+    }
+    
+    // Gérer les messages du serveur de signalisation
+    handleSignalingMessage(data) {
+        if (data.type === 'ping') {
+            // Ignorer les pings du serveur (utilisés pour maintenir la connexion)
+            return;
+        }
+        
+        console.log('Message de signalisation reçu:', data.type);
+        
+        switch (data.type) {
+            case 'peers':
+                // Liste des pairs connectés
+                console.log('Pairs disponibles:', data.peers);
+                data.peers.forEach(peerId => this.connectToPeer(peerId));
+                this.onPeersUpdate(data.peers.length, true);
+                break;
                 
-                this.peers = new Map(); // peerId -> { connection, dataChannel }
-                this.pendingIceCandidates = new Map(); // peerId -> [ice candidates]
+            case 'new_peer':
+                // Un nouveau pair s'est connecté
+                console.log('Nouveau pair connecté:', data.nodeId);
+                this.connectToPeer(data.nodeId);
+                this.onPeersUpdate(this.peers.size + 1, true);
+                break;
                 
-                this.mining = false;
-                this.connected = false;
+            case 'peer_disconnected':
+                // Un pair s'est déconnecté
+                console.log('Pair déconnecté:', data.nodeId);
+                this.removePeer(data.nodeId);
+                this.onPeersUpdate(this.peers.size, true);
+                break;
                 
-                // Configuration WebRTC
-                this.rtcConfig = {
-                    iceServers: [
-                        { urls: 'stun:stun.l.google.com:19302' },
-                        { urls: 'stun:stun1.l.google.com:19302' }
-                    ]
+            case 'offer':
+                // Réception d'une offre de connexion
+                console.log('Offre reçue de:', data.source);
+                this.handleOffer(data);
+                break;
+                
+            case 'answer':
+                // Réception d'une réponse à notre offre
+                console.log('Réponse reçue de:', data.source);
+                this.handleAnswer(data);
+                break;
+                
+            case 'ice-candidate':
+                // Réception d'un candidat ICE
+                this.handleIceCandidate(data);
+                break;
+        }
+    }
+    
+    // Initier une connexion à un pair
+    connectToPeer(peerId) {
+        if (peerId === this.wallet.id || this.peers.has(peerId)) return;
+        
+        console.log(`Connexion au pair: ${peerId}`);
+        
+        // Créer une connexion RTCPeerConnection
+        const peerConnection = new RTCPeerConnection(this.rtcConfig);
+        
+        // Créer un canal de données
+        const dataChannel = peerConnection.createDataChannel('blockchain', {
+            ordered: true,
+            maxRetransmits: 3
+        });
+        
+        // Configurer les événements du canal de données
+        this.setupDataChannel(dataChannel, peerId);
+        
+        // Gérer les candidats ICE
+        peerConnection.onicecandidate = (event) => {
+            if (event.candidate) {
+                this.sendSignalingMessage({
+                    type: 'ice-candidate',
+                    target: peerId,
+                    candidate: event.candidate
+                });
+            }
+        };
+        
+        // Gérer les changements d'état de connexion ICE
+        peerConnection.oniceconnectionstatechange = () => {
+            console.log(`État de connexion ICE avec ${peerId}: ${peerConnection.iceConnectionState}`);
+        };
+        
+        // Gérer la négociation
+        peerConnection.onnegotiationneeded = async () => {
+            try {
+                // Créer une offre
+                const offer = await peerConnection.createOffer();
+                await peerConnection.setLocalDescription(offer);
+                
+                // Envoyer l'offre au pair via le serveur de signalisation
+                this.sendSignalingMessage({
+                    type: 'offer',
+                    target: peerId,
+                    sdp: peerConnection.localDescription
+                });
+            } catch (error) {
+                console.error('Erreur lors de la création de l\'offre:', error);
+            }
+        };
+        
+        // Gérer la fermeture de la connexion
+        peerConnection.onconnectionstatechange = () => {
+            console.log(`État de connexion avec ${peerId}: ${peerConnection.connectionState}`);
+            if (peerConnection.connectionState === 'disconnected' || 
+                peerConnection.connectionState === 'failed' ||
+                peerConnection.connectionState === 'closed') {
+                this.removePeer(peerId);
+                this.onPeersUpdate(this.peers.size, this.connected);
+            }
+        };
+        
+        // Enregistrer la connexion
+        this.peers.set(peerId, { connection: peerConnection, dataChannel });
+    }
+    
+    // Configurer les événements du canal de données
+    setupDataChannel(dataChannel, peerId) {
+        dataChannel.onopen = () => {
+            console.log(`Canal de données ouvert avec ${peerId}`);
+            
+            // Mettre à jour le statut du pair
+            if (this.peers.has(peerId)) {
+                const peer = this.peers.get(peerId);
+                peer.status = 'connected';
+                peer.lastSeen = new Date().toISOString();
+                this.peers.set(peerId, peer);
+            }
+            
+            // Demander la dernière version de la blockchain
+            this.sendToPeer(peerId, {
+                type: 'request_blockchain',
+                height: this.blockchain.chain.length
+            });
+            
+            // Notifier l'application
+            this.onPeersUpdate(this.peers.size, this.connected);
+        };
+        
+        dataChannel.onclose = () => {
+            console.log(`Canal de données fermé avec ${peerId}`);
+            
+            // Mettre à jour le statut du pair
+            if (this.peers.has(peerId)) {
+                const peer = this.peers.get(peerId);
+                peer.status = 'disconnected';
+                this.peers.set(peerId, peer);
+            }
+            
+            // Notifier l'application
+            this.onPeersUpdate(this.peers.size, this.connected);
+        };
+        
+        dataChannel.onerror = (error) => {
+            console.error(`Erreur de canal de données avec ${peerId}:`, error);
+        };
+        
+        dataChannel.onmessage = (event) => {
+            try {
+                const message = JSON.parse(event.data);
+                
+                // Mettre à jour le timestamp de dernière activité
+                if (this.peers.has(peerId)) {
+                    const peer = this.peers.get(peerId);
+                    peer.lastSeen = new Date().toISOString();
+                    this.peers.set(peerId, peer);
+                }
+                
+                this.handlePeerMessage(message, peerId);
+            } catch (error) {
+                console.error('Erreur lors du traitement du message du pair:', error);
+            }
+        };
+    }
+    
+    // Gérer une offre reçue
+    async handleOffer(data) {
+        try {
+            const peerId = data.source;
+            
+            // Créer une connexion si elle n'existe pas
+            if (!this.peers.has(peerId)) {
+                const peerConnection = new RTCPeerConnection(this.rtcConfig);
+                
+                // Gérer les candidats ICE
+                peerConnection.onicecandidate = (event) => {
+                    if (event.candidate) {
+                        this.sendSignalingMessage({
+                            type: 'ice-candidate',
+                            target: peerId,
+                            candidate: event.candidate
+                        });
+                    }
                 };
                 
-                // Connexion au serveur de signalisation
-                this.initSignaling();
-            }
-            
-            // Connexion au serveur de signalisation
-            initSignaling() {
-                const wsUrl = 'wss://your-project-name.glitch.me';
-    
-    console.log(`Connexion au serveur de signalisation: ${wsUrl}`);
-    this.signalingSocket = new WebSocket(wsUrl);
-                
-                // Simuler une connexion réussie après un court délai
-                setTimeout(() => {
-                    this.connected = true;
-                    console.log('Connexion établie avec le serveur de signalisation (simulé)');
-                    this.onPeersUpdate(0, true);
+                // Gérer les canaux de données entrants
+                peerConnection.ondatachannel = (event) => {
+                    console.log(`Canal de données reçu de ${peerId}`);
+                    this.setupDataChannel(event.channel, peerId);
                     
-                    // Simuler la découverte de quelques pairs après un délai
-                    setTimeout(() => {
-                        // Générer quelques IDs de pairs aléatoires
-                        const peerIds = [
-                            'wallet_' + Math.random().toString(36).substring(2, 10),
-                            'wallet_' + Math.random().toString(36).substring(2, 10),
-                            'wallet_' + Math.random().toString(36).substring(2, 10)
-                        ];
-                        
-                        // Ajouter ces pairs à notre liste
-                        peerIds.forEach(peerId => {
-                            this.peers.set(peerId, { 
-                                connection: null, 
-                                dataChannel: null,
-                                status: 'connected',
-                                lastSeen: new Date().toISOString()
-                            });
-                        });
-                        
-                        // Notifier l'application
-                        this.onPeersUpdate(this.peers.size, true);
-                    }, 2000);
-                }, 1500);
-            }
-            
-            // Obtenir la liste des pairs
-            getPeers() {
-                // Convertir la Map en tableau d'objets
-                return Array.from(this.peers.entries()).map(([id, data]) => {
-                    return {
-                        id,
-                        status: data.status || 'unknown',
-                        lastSeen: data.lastSeen || null
-                    };
+                    // Mettre à jour la connexion avec le canal de données reçu
+                    this.peers.set(peerId, { 
+                        connection: peerConnection,
+                        dataChannel: event.channel,
+                        status: 'connecting',
+                        lastSeen: new Date().toISOString()
+                    });
+                };
+                
+                // Gérer les changements d'état de connexion ICE
+                peerConnection.oniceconnectionstatechange = () => {
+                    console.log(`État de connexion ICE avec ${peerId}: ${peerConnection.iceConnectionState}`);
+                };
+                
+                // Gérer la fermeture de la connexion
+                peerConnection.onconnectionstatechange = () => {
+                    console.log(`État de connexion avec ${peerId}: ${peerConnection.connectionState}`);
+                    if (peerConnection.connectionState === 'disconnected' || 
+                        peerConnection.connectionState === 'failed' ||
+                        peerConnection.connectionState === 'closed') {
+                        this.removePeer(peerId);
+                        this.onPeersUpdate(this.peers.size, this.connected);
+                    }
+                };
+                
+                // Enregistrer la connexion (sans canal de données pour l'instant)
+                this.peers.set(peerId, { 
+                    connection: peerConnection, 
+                    dataChannel: null,
+                    status: 'connecting',
+                    lastSeen: new Date().toISOString()
                 });
             }
             
-            // Diffuser une transaction
-            broadcastTransaction(transaction) {
-                console.log('Simulation de diffusion d\'une transaction:', transaction);
-                
-                // Dans cette version simulée, nous supposons que la transaction est diffusée avec succès
-                // et nous la renvoyons simplement pour indiquer le succès
-                return transaction;
+            const peerConnection = this.peers.get(peerId).connection;
+            
+            // Définir la description distante (l'offre)
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
+            
+            // Créer une réponse
+            const answer = await peerConnection.createAnswer();
+            await peerConnection.setLocalDescription(answer);
+            
+            // Envoyer la réponse
+            this.sendSignalingMessage({
+                type: 'answer',
+                target: peerId,
+                sdp: peerConnection.localDescription
+            });
+            
+            // Traiter les candidats ICE en attente
+            if (this.pendingIceCandidates.has(peerId)) {
+                const candidates = this.pendingIceCandidates.get(peerId);
+                for (const candidate of candidates) {
+                    await peerConnection.addIceCandidate(candidate);
+                }
+                this.pendingIceCandidates.delete(peerId);
+            }
+        } catch (error) {
+            console.error('Erreur lors du traitement de l\'offre:', error);
+        }
+    }
+    
+    // Gérer une réponse reçue
+    async handleAnswer(data) {
+        try {
+            const peerId = data.source;
+            
+            if (!this.peers.has(peerId)) {
+                console.error(`Réponse reçue d'un pair inconnu: ${peerId}`);
+                return;
             }
             
-            // Miner un bloc et le diffuser
-            mineAndBroadcast() {
-                if (this.mining) return null;
-                
-                this.mining = true;
-                console.log('Début du minage d\'un bloc...');
-                
-                // Simuler le temps de minage
-                setTimeout(() => {
-                    try {
-                        // Effectuer le minage localement
-                        if (this.blockchain.pendingTransactions.length > 0) {
-                            const block = this.blockchain.minePendingTransactions(this.wallet.id);
-                            console.log('Bloc miné avec succès:', block);
-                            
-                            // Notifier l'application
-                            this.onChainUpdate();
-                            
-                            // Simulation de la diffusion réussie
-                            console.log('Bloc diffusé aux pairs (simulé)');
-                        }
-                    } catch (error) {
-                        console.error('Erreur lors du minage:', error);
-                    } finally {
-                        this.mining = false;
-                    }
-                }, 3000); // Simuler 3 secondes de minage
-                
-                return true;
+            const peerConnection = this.peers.get(peerId).connection;
+            
+            // Définir la description distante (la réponse)
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
+            
+            // Traiter les candidats ICE en attente
+            if (this.pendingIceCandidates.has(peerId)) {
+                const candidates = this.pendingIceCandidates.get(peerId);
+                for (const candidate of candidates) {
+                    await peerConnection.addIceCandidate(candidate);
+                }
+                this.pendingIceCandidates.delete(peerId);
+            }
+        } catch (error) {
+            console.error('Erreur lors du traitement de la réponse:', error);
+        }
+    }
+    
+    // Gérer un candidat ICE reçu
+    async handleIceCandidate(data) {
+        const peerId = data.source;
+        const candidate = new RTCIceCandidate(data.candidate);
+        
+        if (!this.peers.has(peerId) || !this.peers.get(peerId).connection) {
+            // Stocker le candidat pour plus tard
+            if (!this.pendingIceCandidates.has(peerId)) {
+                this.pendingIceCandidates.set(peerId, []);
+            }
+            this.pendingIceCandidates.get(peerId).push(candidate);
+            return;
+        }
+        
+        try {
+            const peerConnection = this.peers.get(peerId).connection;
+            if (peerConnection.remoteDescription) {
+                await peerConnection.addIceCandidate(candidate);
+            } else {
+                // Stocker le candidat si la description distante n'est pas encore définie
+                if (!this.pendingIceCandidates.has(peerId)) {
+                    this.pendingIceCandidates.set(peerId, []);
+                }
+                this.pendingIceCandidates.get(peerId).push(candidate);
+            }
+        } catch (error) {
+            console.error('Erreur lors de l\'ajout du candidat ICE:', error);
+        }
+    }
+    
+    // Envoyer un message au serveur de signalisation
+    sendSignalingMessage(message) {
+        if (this.signalingSocket && this.signalingSocket.readyState === WebSocket.OPEN) {
+            this.signalingSocket.send(JSON.stringify(message));
+            return true;
+        }
+        return false;
+    }
+    
+    // Supprimer un pair
+    removePeer(peerId) {
+        if (this.peers.has(peerId)) {
+            const { connection, dataChannel } = this.peers.get(peerId);
+            
+            if (dataChannel) {
+                try {
+                    dataChannel.close();
+                } catch (error) {
+                    console.error(`Erreur lors de la fermeture du canal de données avec ${peerId}:`, error);
+                }
             }
             
-            // Vérifier si nous sommes connectés au réseau
-            isConnected() {
-                return this.connected;
+            if (connection) {
+                try {
+                    connection.close();
+                } catch (error) {
+                    console.error(`Erreur lors de la fermeture de la connexion avec ${peerId}:`, error);
+                }
+            }
+            
+            this.peers.delete(peerId);
+            console.log(`Pair supprimé: ${peerId}`);
+        }
+    }
+    
+    // Envoyer un message à un pair spécifique
+    sendToPeer(peerId, message) {
+        if (this.peers.has(peerId)) {
+            const peer = this.peers.get(peerId);
+            
+            if (peer.dataChannel && peer.dataChannel.readyState === 'open') {
+                try {
+                    peer.dataChannel.send(JSON.stringify(message));
+                    return true;
+                } catch (error) {
+                    console.error(`Erreur lors de l'envoi du message à ${peerId}:`, error);
+                }
             }
         }
+        return false;
+    }
+    
+    // Diffuser un message à tous les pairs
+    broadcast(message) {
+        let sentCount = 0;
+        this.peers.forEach((peer, peerId) => {
+            if (this.sendToPeer(peerId, message)) {
+                sentCount++;
+            }
+        });
+        return sentCount;
+    }
+    
+    // Diffuser un message à tous les pairs sauf un
+    broadcastExcept(message, exceptPeerId) {
+        let sentCount = 0;
+        this.peers.forEach((peer, peerId) => {
+            if (peerId !== exceptPeerId && this.sendToPeer(peerId, message)) {
+                sentCount++;
+            }
+        });
+        return sentCount;
+    }
+    
+    // Gérer les messages reçus des pairs
+    handlePeerMessage(message, peerId) {
+        console.log(`Message reçu de ${peerId}:`, message.type);
+        
+        switch (message.type) {
+            case 'request_blockchain':
+                // Un pair demande notre blockchain
+                this.handleBlockchainRequest(message, peerId);
+                break;
+                
+            case 'blockchain_data':
+                // Réception de données blockchain
+                this.handleBlockchainData(message, peerId);
+                break;
+                
+            case 'new_transaction':
+                // Réception d'une nouvelle transaction
+                this.handleNewTransaction(message, peerId);
+                break;
+                
+            case 'new_block':
+                // Réception d'un nouveau bloc
+                this.handleNewBlock(message, peerId);
+                break;
+                
+            case 'mining_intent':
+                // Un pair veut miner un bloc
+                this.handleMiningIntent(message, peerId);
+                break;
+        }
+    }
+    
+    // Répondre à une demande de blockchain
+    handleBlockchainRequest(message, peerId) {
+        console.log(`${peerId} demande notre blockchain`);
+        
+        // Envoyer notre blockchain
+        this.sendToPeer(peerId, {
+            type: 'blockchain_data',
+            chain: this.blockchain.chain,
+            pendingTransactions: this.blockchain.pendingTransactions
+        });
+    }
+    
+    // Traiter les données blockchain reçues
+    handleBlockchainData(message, peerId) {
+        console.log(`Données blockchain reçues de ${peerId}`);
+        
+        // Vérifier si la chaîne reçue est plus longue et valide
+        if (message.chain && Array.isArray(message.chain) && message.chain.length > this.blockchain.chain.length) {
+            // Créer une nouvelle instance pour validation
+            const tempChain = [];
+            
+            // Convertir les objets simples en instances de Block
+            for (const blockData of message.chain) {
+                if (blockData.index === 0) {
+                    // Bloc genesis
+                    tempChain.push(blockData);
+                } else {
+                    // Autres blocs
+                    const block = new Block(
+                        blockData.index,
+                        blockData.timestamp,
+                        blockData.data,
+                        blockData.previousHash
+                    );
+                    block.hash = blockData.hash;
+                    block.nonce = blockData.nonce;
+                    tempChain.push(block);
+                }
+            }
+            
+            // Vérifier si la chaîne est valide
+            let isValid = true;
+            for (let i = 1; i < tempChain.length; i++) {
+                const currentBlock = tempChain[i];
+                const previousBlock = tempChain[i - 1];
+                
+                // Vérifier le lien au bloc précédent
+                if (currentBlock.previousHash !== previousBlock.hash) {
+                    isValid = false;
+                    break;
+                }
+                
+                // Vérifier le hash du bloc (preuve de travail)
+                if (currentBlock.hash.substring(0, this.blockchain.difficulty) !== 
+                    Array(this.blockchain.difficulty + 1).join('0')) {
+                    isValid = false;
+                    break;
+                }
+            }
+            
+            if (isValid) {
+                console.log(`Adoption d'une nouvelle blockchain plus longue de ${peerId}`);
+                this.blockchain.chain = tempChain;
+                
+                // Mettre à jour les transactions en attente
+                if (message.pendingTransactions && Array.isArray(message.pendingTransactions)) {
+                    this.blockchain.pendingTransactions = message.pendingTransactions;
+                }
+                
+                // Notifier l'application de la mise à jour
+                this.onChainUpdate();
+                
+                // Sauvegarder la blockchain
+                localStorage.setItem('blockchain', JSON.stringify(this.blockchain));
+            } else {
+                console.log(`La blockchain reçue de ${peerId} est invalide`);
+            }
+        } else {
+            console.log(`La blockchain reçue de ${peerId} n'est pas plus longue que la nôtre`);
+        }
+    }
+    
+    // Traiter une nouvelle transaction reçue
+    handleNewTransaction(message, peerId) {
+        const transaction = message.transaction;
+        console.log(`Nouvelle transaction reçue de ${peerId}:`, transaction);
+        
+        // Vérifier si la transaction est valide
+        if (this.isValidTransaction(transaction)) {
+            // Vérifier si nous n'avons pas déjà cette transaction
+            const exists = this.blockchain.pendingTransactions.some(tx => 
+                tx.sender === transaction.sender && 
+                tx.recipient === transaction.recipient && 
+                tx.amount === transaction.amount &&
+                tx.timestamp === transaction.timestamp
+            );
+            
+            if (!exists) {
+                // Ajouter à notre liste de transactions en attente
+                this.blockchain.pendingTransactions.push(transaction);
+                
+                // Relayer la transaction aux autres pairs
+                this.broadcastExcept({
+                    type: 'new_transaction',
+                    transaction: transaction
+                }, peerId);
+                
+                // Notifier l'application
+                this.onTransactionReceived(transaction);
+                
+                // Sauvegarder la blockchain
+                localStorage.setItem('blockchain', JSON.stringify(this.blockchain));
+            }
+        }
+    }
+    
+    // Traiter un nouveau bloc reçu
+    handleNewBlock(message, peerId) {
+        const blockData = message.block;
+        console.log(`Nouveau bloc reçu de ${peerId}:`, blockData);
+        
+        // Convertir l'objet simple en instance de Block
+        const block = new Block(
+            blockData.index,
+            blockData.timestamp,
+            blockData.data,
+            blockData.previousHash
+        );
+        block.hash = blockData.hash;
+        block.nonce = blockData.nonce;
+        
+        // Vérifier si le bloc est valide
+        if (this.isValidBlock(block)) {
+            // Si le bloc est pour la prochaine position dans notre chaîne
+            if (block.index === this.blockchain.chain.length) {
+                console.log(`Ajout du bloc #${block.index} à notre chaîne`);
+                
+                // Ajouter le bloc à notre chaîne
+                this.blockchain.chain.push(block);
+                
+                // Mettre à jour nos transactions en attente
+                // Retirer les transactions qui sont dans le nouveau bloc
+                if (block.data && block.data.transactions) {
+                    const blockTxs = block.data.transactions;
+                    this.blockchain.pendingTransactions = this.blockchain.pendingTransactions.filter(tx => {
+                        return !blockTxs.some(btx => 
+                            btx.sender === tx.sender && 
+                            btx.recipient === tx.recipient && 
+                            btx.amount === tx.amount &&
+                            btx.timestamp === tx.timestamp
+                        );
+                    });
+                }
+                
+                // Relayer le bloc aux autres pairs
+                this.broadcastExcept({
+                    type: 'new_block',
+                    block: blockData
+                }, peerId);
+                
+                // Notifier l'application
+                this.onChainUpdate();
+                
+                // Sauvegarder la blockchain
+                localStorage.setItem('blockchain', JSON.stringify(this.blockchain));
+            }
+            // Si nous avons manqué des blocs, demander la chaîne complète
+            else if (block.index > this.blockchain.chain.length) {
+                console.log(`Nous avons manqué des blocs, demande de synchronisation`);
+                this.sendToPeer(peerId, {
+                    type: 'request_blockchain',
+                    height: this.blockchain.chain.length
+                });
+            }
+        }
+    }
+    
+    // Traiter une intention de minage
+    handleMiningIntent(message, peerId) {
+        // Dans cette implémentation, nous utilisons un système simple:
+        // Le premier à miner et diffuser un bloc valide gagne
+        console.log(`${peerId} a l'intention de miner un bloc`);
+    }
+    
+    // Vérifier si une transaction est valide
+    isValidTransaction(transaction) {
+        // Vérifier que les champs requis sont présents
+        if (!transaction.sender || !transaction.recipient || 
+            transaction.amount === undefined || !transaction.timestamp) {
+            return false;
+        }
+        
+        // Vérifier que le montant est positif
+        if (typeof transaction.amount !== 'number' || transaction.amount <= 0) {
+            return false;
+        }
+        
+        // Si l'expéditeur n'est pas le système, vérifier qu'il a les fonds suffisants
+        if (transaction.sender !== 'Système') {
+            const senderBalance = this.blockchain.getBalanceOfAddress(transaction.sender);
+            if (transaction.amount > senderBalance) {
+                return false;
+            }
+        }
+        
+        return true;
+    }
+    
+    // Vérifier si un bloc est valide
+    isValidBlock(block) {
+        // Vérifier que les champs requis sont présents
+        if (block.index === undefined || !block.timestamp || !block.hash || !block.previousHash) {
+            return false;
+        }
+        
+        // Vérifier que le bloc a le bon index
+        const expectedIndex = this.blockchain.chain.length;
+        if (block.index < expectedIndex) {
+            // Nous avons déjà ce bloc ou un plus récent
+            return false;
+        }
+        
+        // Si c'est le bloc suivant, vérifier qu'il pointe vers notre dernier bloc
+        if (block.index === expectedIndex) {
+            const lastBlock = this.blockchain.getLatestBlock();
+            if (block.previousHash !== lastBlock.hash) {
+                return false;
+            }
+        }
+        
+        // Vérifier la preuve de travail
+        if (block.hash.substring(0, this.blockchain.difficulty) !== 
+            Array(this.blockchain.difficulty + 1).join('0')) {
+            return false;
+        }
+        
+        return true;
+    }
+    
+    // Diffuser une nouvelle transaction
+    broadcastTransaction(transaction) {
+        console.log('Diffusion d\'une nouvelle transaction:', transaction);
+        
+        return this.broadcast({
+            type: 'new_transaction',
+            transaction: transaction
+        });
+    }
+    
+    // Diffuser un nouveau bloc
+    broadcastBlock(block) {
+        console.log('Diffusion d\'un nouveau bloc:', block);
+        
+        return this.broadcast({
+            type: 'new_block',
+            block: block
+        });
+    }
+    
+    // Annoncer l'intention de miner
+    announceMiningIntent() {
+        console.log('Annonce de l\'intention de miner');
+        
+        return this.broadcast({
+            type: 'mining_intent',
+            nodeId: this.wallet.id,
+            timestamp: new Date().toISOString()
+        });
+    }
+    
+    // Miner un bloc et le diffuser (suite)
+    mineAndBroadcast() {
+        if (this.mining) return false;
+        
+        this.mining = true;
+        this.announceMiningIntent();
+        
+        setTimeout(() => {
+            try {
+                // Effectuer le minage localement
+                if (this.blockchain.pendingTransactions.length > 0) {
+                    const block = new Block(
+                        this.blockchain.chain.length,
+                        new Date().toISOString(),
+                        {
+                            transactions: [...this.blockchain.pendingTransactions],
+                            message: `Bloc miné par ${this.wallet.id}`
+                        },
+                        this.blockchain.getLatestBlock().hash
+                    );
+                    
+                    // Miner le bloc
+                    block.mineBlock(this.blockchain.difficulty);
+                    console.log('Bloc miné avec succès: ' + block.hash);
+                    
+                    // Ajouter le bloc à la chaîne
+                    this.blockchain.chain.push(block);
+                    
+                    // Réinitialiser les transactions en attente et ajouter la récompense
+                    this.blockchain.pendingTransactions = [
+                        {
+                            sender: 'Système',
+                            recipient: this.wallet.id,
+                            amount: 1, // Récompense symbolique
+                            timestamp: new Date().toISOString()
+                        }
+                    ];
+                    
+                    // Diffuser le bloc
+                    this.broadcastBlock(block);
+                    
+                    // Notifier l'application
+                    this.onChainUpdate();
+                    
+                    // Sauvegarder la blockchain
+                    localStorage.setItem('blockchain', JSON.stringify(this.blockchain));
+                }
+            } catch (error) {
+                console.error('Erreur lors du minage:', error);
+            } finally {
+                this.mining = false;
+            }
+        }, 1000); // Délai avant minage pour permettre annulation par un autre nœud
+        
+        return true;
+    }
+    
+    // Obtenir la liste des pairs connectés
+    getPeers() {
+        return Array.from(this.peers.entries()).map(([id, data]) => {
+            return {
+                id,
+                status: data.status || 'unknown',
+                lastSeen: data.lastSeen || null
+            };
+        });
+    }
+    
+    // Vérifier si nous sommes connectés au réseau
+    isConnected() {
+        return this.connected;
+    }
+    
+    // Obtenir le nombre de pairs connectés
+    getPeerCount() {
+        let connectedCount = 0;
+        this.peers.forEach(peer => {
+            if (peer.status === 'connected') {
+                connectedCount++;
+            }
+        });
+        return connectedCount;
+    }
+}
 
         // Initialisation de l'application
         document.addEventListener('DOMContentLoaded', () => {
