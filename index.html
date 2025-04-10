@@ -1,0 +1,842 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Blockchain P2P</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f5f5f5;
+            margin: 0;
+            padding: 20px;
+            color: #333;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        h1 {
+            text-align: center;
+            color: #2c3e50;
+        }
+        .card {
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .wallet-info {
+            display: flex;
+            flex-direction: column;
+        }
+        .wallet-id {
+            font-size: 0.9em;
+            color: #666;
+            word-break: break-all;
+        }
+        .wallet-key {
+            font-size: 0.8em;
+            color: #666;
+            word-break: break-all;
+            background-color: #f9f9f9;
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid #eee;
+            display: none;
+        }
+        .wallet-key.visible {
+            display: block;
+        }
+        .balance {
+            font-size: 1.8em;
+            font-weight: bold;
+            color: #2a9d8f;
+            margin: 10px 0;
+        }
+        .transaction-form {
+            display: grid;
+            grid-gap: 10px;
+        }
+        .form-group {
+            display: flex;
+            flex-direction: column;
+        }
+        label {
+            margin-bottom: 5px;
+            font-weight: 500;
+        }
+        input {
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 1em;
+        }
+        button {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 12px;
+            font-size: 1em;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+        button:disabled {
+            background-color: #95a5a6;
+            cursor: not-allowed;
+        }
+        .blocks-container {
+            display: grid;
+            grid-gap: 15px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .block {
+            background-color: #f9f9f9;
+            border: 1px solid #eee;
+            border-radius: 4px;
+            padding: 15px;
+        }
+        .block-header {
+            font-weight: bold;
+            margin-bottom: 5px;
+            color: #2c3e50;
+        }
+        .transactions {
+            margin-top: 10px;
+        }
+        .transaction {
+            background-color: #f0f0f0;
+            border-radius: 4px;
+            padding: 8px;
+            margin-top: 5px;
+            font-size: 0.9em;
+        }
+        .mining-animation {
+            text-align: center;
+            padding: 20px;
+            display: none;
+        }
+        .mining-animation.active {
+            display: block;
+        }
+        .spinner {
+            border: 5px solid rgba(0, 0, 0, 0.1);
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            border-left-color: #3498db;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background-color: #2ecc71;
+            color: white;
+            padding: 15px 20px;
+            border-radius: 4px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            transform: translateX(120%);
+            transition: transform 0.3s ease-out;
+            z-index: 1000;
+        }
+        .notification.show {
+            transform: translateX(0);
+        }
+        .notification.error {
+            background-color: #e74c3c;
+        }
+        .wallet-actions {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            grid-gap: 10px;
+            margin-top: 15px;
+        }
+        .wallet-actions button {
+            padding: 8px;
+        }
+        .network-stats {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid #eee;
+        }
+        .network-info {
+            font-size: 0.9em;
+            color: #666;
+        }
+        .status-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 5px;
+        }
+        .status-online {
+            background-color: #2ecc71;
+        }
+        .status-offline {
+            background-color: #e74c3c;
+        }
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        .modal.active {
+            display: flex;
+        }
+        .modal-content {
+            background-color: white;
+            border-radius: 8px;
+            width: 90%;
+            max-width: 500px;
+            padding: 20px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+        }
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        .modal-header h3 {
+            margin: 0;
+        }
+        .close-modal {
+            background: none;
+            border: none;
+            font-size: 1.5em;
+            cursor: pointer;
+            padding: 0;
+            color: #666;
+        }
+        .peers-list {
+            background-color: #f9f9f9;
+            border-radius: 4px;
+            padding: 10px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .peer-item {
+            padding: 5px;
+            border-bottom: 1px solid #eee;
+            font-size: 0.9em;
+        }
+        .peer-item:last-child {
+            border-bottom: none;
+        }
+        .btn-secondary {
+            background-color: #2c3e50;
+        }
+        .btn-secondary:hover {
+            background-color: #1a252f;
+        }
+        .btn-warning {
+            background-color: #f39c12;
+        }
+        .btn-warning:hover {
+            background-color: #d35400;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Blockchain P2P</h1>
+        
+        <div class="card">
+            <h2>Votre Portefeuille</h2>
+            <div class="wallet-info">
+                <span>Identifiant:</span>
+                <span class="wallet-id" id="walletId"></span>
+                <div class="balance" id="balance">0 tokens</div>
+                <div id="walletKey" class="wallet-key"></div>
+            </div>
+            <div class="wallet-actions">
+                <button id="showKeyBtn" class="btn-secondary">Afficher/Masquer la clé privée</button>
+                <button id="exportBtn">Exporter le portefeuille</button>
+                <button id="importBtn">Importer un portefeuille</button>
+                <button id="peersBtn" class="btn-warning">Voir les pairs connectés</button>
+            </div>
+            <div class="network-stats">
+                <div class="network-info">
+                    <span>Statut du réseau: </span>
+                    <span id="networkStatus">
+                        <span class="status-indicator status-offline"></span>
+                        Déconnecté
+                    </span>
+                </div>
+                <div class="network-info">
+                    <span>Pairs connectés: </span>
+                    <span id="peersCount">0</span>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <h2>Nouvelle Transaction</h2>
+            <div class="transaction-form">
+                <div class="form-group">
+                    <label for="recipient">Destinataire (ID)</label>
+                    <input type="text" id="recipient" placeholder="ID du destinataire">
+                </div>
+                <div class="form-group">
+                    <label for="amount">Montant</label>
+                    <input type="number" id="amount" placeholder="Montant à envoyer" min="0.1" step="0.1">
+                </div>
+                <button id="sendBtn">Envoyer des tokens</button>
+            </div>
+        </div>
+        
+        <div class="mining-animation" id="miningAnimation">
+            <div class="spinner"></div>
+            <p>Minage en cours...</p>
+        </div>
+        
+        <div class="card">
+            <h2>Blocs dans la chaîne</h2>
+            <div class="blocks-container" id="blocksContainer">
+                <!-- Les blocs seront ajoutés ici dynamiquement -->
+            </div>
+        </div>
+    </div>
+    
+    <!-- Modal des pairs connectés -->
+    <div class="modal" id="peersModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Pairs connectés</h3>
+                <button class="close-modal" id="closePeersModal">&times;</button>
+            </div>
+            <div class="peers-list" id="peersList">
+                <!-- Les pairs seront ajoutés ici dynamiquement -->
+                <div class="peer-item">Aucun pair connecté</div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Modal d'exportation du portefeuille -->
+    <div class="modal" id="exportModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Exporter votre portefeuille</h3>
+                <button class="close-modal" id="closeExportModal">&times;</button>
+            </div>
+            <div>
+                <p>Voici votre clé privée. Conservez-la en lieu sûr pour récupérer votre portefeuille.</p>
+                <textarea id="exportKeyDisplay" readonly style="width: 100%; height: 80px; margin: 10px 0;"></textarea>
+                <button id="copyExportKey" style="background-color: #f0f0f0; color: #333; margin-bottom: 15px;">Copier la clé</button>
+                <p>Vous pouvez également télécharger un fichier de sauvegarde:</p>
+                <button id="downloadWalletFile">Télécharger le fichier de sauvegarde</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Modal d'importation du portefeuille -->
+    <div class="modal" id="importModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Importer un portefeuille</h3>
+                <button class="close-modal" id="closeImportModal">&times;</button>
+            </div>
+            <div>
+                <p>Collez votre clé privée ci-dessous:</p>
+                <textarea id="importKeyInput" placeholder="Collez votre clé privée ici..." style="width: 100%; height: 80px; margin: 10px 0;"></textarea>
+                <p>Ou importez un fichier de sauvegarde:</p>
+                <input type="file" id="importFileInput" accept=".json">
+                <div style="margin-top: 15px; display: flex; justify-content: flex-end;">
+                    <button id="importWalletBtn">Importer</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="notification" id="notification"></div>
+
+    <script>
+        // Structure d'un bloc dans notre blockchain
+        class Block {
+            constructor(index, timestamp, data, previousHash = '') {
+                this.index = index;
+                this.timestamp = timestamp;
+                this.data = data;
+                this.previousHash = previousHash;
+                this.hash = this.calculateHash();
+                this.nonce = 0;
+            }
+
+            // Calcul du hash du bloc
+            calculateHash() {
+                return CryptoJS.SHA256(
+                    this.index +
+                    this.timestamp +
+                    JSON.stringify(this.data) +
+                    this.previousHash +
+                    this.nonce
+                ).toString();
+            }
+
+            // Preuve de travail simplifiée (pour démonstration)
+            mineBlock(difficulty) {
+                while (this.hash.substring(0, difficulty) !== Array(difficulty + 1).join('0')) {
+                    this.nonce++;
+                    this.hash = this.calculateHash();
+                }
+                return this.hash;
+            }
+        }
+
+        // Notre blockchain simplifiée
+        class Blockchain {
+            constructor() {
+                this.chain = [this.createGenesisBlock()];
+                this.difficulty = 2; // Difficulté de minage (pour démonstration)
+                this.pendingTransactions = [];
+            }
+
+            // Premier bloc de la chaîne
+            createGenesisBlock() {
+                return new Block(0, new Date().toISOString(), { message: 'Bloc initial', transactions: [] }, '0');
+            }
+
+            // Récupère le dernier bloc
+            getLatestBlock() {
+                return this.chain[this.chain.length - 1];
+            }
+
+            // Ajoute une transaction en attente
+            createTransaction(sender, recipient, amount) {
+                const transaction = {
+                    sender,
+                    recipient,
+                    amount,
+                    timestamp: new Date().toISOString()
+                };
+                
+                this.pendingTransactions.push(transaction);
+                return transaction;
+            }
+
+            // Mine les transactions en attente
+            minePendingTransactions(minerRewardAddress) {
+                // Création d'un nouveau bloc avec les transactions en attente
+                const block = new Block(
+                    this.getLatestBlock().index + 1,
+                    new Date().toISOString(),
+                    {
+                        transactions: [...this.pendingTransactions],
+                        message: `Bloc miné par ${minerRewardAddress}`
+                    },
+                    this.getLatestBlock().hash
+                );
+
+                // Minage du bloc
+                block.mineBlock(this.difficulty);
+                console.log('Bloc miné avec succès: ' + block.hash);
+                
+                // Ajout du bloc à la chaîne
+                this.chain.push(block);
+                
+                // Réinitialisation des transactions en attente et création d'une transaction de récompense
+                this.pendingTransactions = [
+                    {
+                        sender: 'Système',
+                        recipient: minerRewardAddress,
+                        amount: 1, // Récompense symbolique
+                        timestamp: new Date().toISOString()
+                    }
+                ];
+                
+                return block;
+            }
+
+            // Vérifie si la chaîne est valide
+            isChainValid() {
+                for (let i = 1; i < this.chain.length; i++) {
+                    const currentBlock = this.chain[i];
+                    const previousBlock = this.chain[i - 1];
+
+                    // Vérifie si le hash du bloc actuel est valide
+                    if (currentBlock.hash !== currentBlock.calculateHash()) {
+                        return false;
+                    }
+
+                    // Vérifie si le bloc pointe correctement vers le précédent
+                    if (currentBlock.previousHash !== previousBlock.hash) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+
+            // Calcule le solde d'une adresse
+            getBalanceOfAddress(address) {
+                let balance = 0;
+
+                // Parcourir tous les blocs
+                for (const block of this.chain) {
+                    // Parcourir toutes les transactions dans chaque bloc
+                    if (block.data.transactions) {
+                        for (const trans of block.data.transactions) {
+                            // Si l'adresse est l'expéditeur, déduire le montant
+                            if (trans.sender === address) {
+                                balance -= parseFloat(trans.amount);
+                            }
+                            
+                            // Si l'adresse est le destinataire, ajouter le montant
+                            if (trans.recipient === address) {
+                                balance += parseFloat(trans.amount);
+                            }
+                        }
+                    }
+                }
+
+                return balance;
+            }
+        }
+
+        // Classe pour la gestion des portefeuilles
+        class Wallet {
+            constructor() {
+                this.id = '';
+                this.privateKey = '';
+            }
+            
+            // Générer un nouveau portefeuille
+            generate() {
+                // Générer une clé privée aléatoire
+                const entropy = Array.from({length: 32}, () => Math.floor(Math.random() * 256));
+                this.privateKey = CryptoJS.SHA256(entropy.join('')).toString();
+                
+                // Générer un ID de portefeuille à partir de la clé privée
+                this.id = 'wallet_' + CryptoJS.SHA256(this.privateKey).toString().substring(0, 10);
+                
+                return {
+                    id: this.id,
+                    privateKey: this.privateKey
+                };
+            }
+            
+            // Restaurer un portefeuille à partir d'une clé privée
+            restoreFromKey(privateKey) {
+                this.privateKey = privateKey;
+                this.id = 'wallet_' + CryptoJS.SHA256(this.privateKey).toString().substring(0, 10);
+                
+                return {
+                    id: this.id,
+                    privateKey: this.privateKey
+                };
+            }
+            
+            // Exporter les données du portefeuille
+            export() {
+                return {
+                    id: this.id,
+                    privateKey: this.privateKey,
+                    timestamp: new Date().toISOString()
+                };
+            }
+            
+            // Vérifier si la clé privée est valide
+            isValidPrivateKey(key) {
+                // Vérification simple: la clé doit être une chaîne hexadécimale de 64 caractères
+                return /^[a-fA-F0-9]{64}$/.test(key);
+            }
+        }
+
+        // Classe P2PNetwork pour gérer les connexions peer-to-peer
+        class P2PNetwork {
+            constructor(wallet, blockchain, onChainUpdate, onTransactionReceived, onPeersUpdate) {
+                this.wallet = wallet;
+                this.blockchain = blockchain;
+                this.onChainUpdate = onChainUpdate;
+                this.onTransactionReceived = onTransactionReceived;
+                this.onPeersUpdate = onPeersUpdate;
+                
+                this.peers = new Map(); // peerId -> { connection, dataChannel }
+                this.pendingIceCandidates = new Map(); // peerId -> [ice candidates]
+                
+                this.mining = false;
+                this.connected = false;
+                
+                // Configuration WebRTC
+                this.rtcConfig = {
+                    iceServers: [
+                        { urls: 'stun:stun.l.google.com:19302' },
+                        { urls: 'stun:stun1.l.google.com:19302' }
+                    ]
+                };
+                
+                // Connexion au serveur de signalisation
+                this.initSignaling();
+            }
+            
+            // Connexion au serveur de signalisation
+            initSignaling() {
+                // Dans un vrai déploiement, vous utiliseriez l'URL de votre serveur de signalisation
+                // Pour cette démo, nous simulons une connexion réussie
+                console.log(`Connexion au serveur de signalisation...`);
+                
+                // Simuler une connexion réussie après un court délai
+                setTimeout(() => {
+                    this.connected = true;
+                    console.log('Connexion établie avec le serveur de signalisation (simulé)');
+                    this.onPeersUpdate(0, true);
+                    
+                    // Simuler la découverte de quelques pairs après un délai
+                    setTimeout(() => {
+                        // Générer quelques IDs de pairs aléatoires
+                        const peerIds = [
+                            'wallet_' + Math.random().toString(36).substring(2, 10),
+                            'wallet_' + Math.random().toString(36).substring(2, 10),
+                            'wallet_' + Math.random().toString(36).substring(2, 10)
+                        ];
+                        
+                        // Ajouter ces pairs à notre liste
+                        peerIds.forEach(peerId => {
+                            this.peers.set(peerId, { 
+                                connection: null, 
+                                dataChannel: null,
+                                status: 'connected',
+                                lastSeen: new Date().toISOString()
+                            });
+                        });
+                        
+                        // Notifier l'application
+                        this.onPeersUpdate(this.peers.size, true);
+                    }, 2000);
+                }, 1500);
+            }
+            
+            // Obtenir la liste des pairs
+            getPeers() {
+                // Convertir la Map en tableau d'objets
+                return Array.from(this.peers.entries()).map(([id, data]) => {
+                    return {
+                        id,
+                        status: data.status || 'unknown',
+                        lastSeen: data.lastSeen || null
+                    };
+                });
+            }
+            
+            // Diffuser une transaction
+            broadcastTransaction(transaction) {
+                console.log('Simulation de diffusion d\'une transaction:', transaction);
+                
+                // Dans cette version simulée, nous supposons que la transaction est diffusée avec succès
+                // et nous la renvoyons simplement pour indiquer le succès
+                return transaction;
+            }
+            
+            // Miner un bloc et le diffuser
+            mineAndBroadcast() {
+                if (this.mining) return null;
+                
+                this.mining = true;
+                console.log('Début du minage d\'un bloc...');
+                
+                // Simuler le temps de minage
+                setTimeout(() => {
+                    try {
+                        // Effectuer le minage localement
+                        if (this.blockchain.pendingTransactions.length > 0) {
+                            const block = this.blockchain.minePendingTransactions(this.wallet.id);
+                            console.log('Bloc miné avec succès:', block);
+                            
+                            // Notifier l'application
+                            this.onChainUpdate();
+                            
+                            // Simulation de la diffusion réussie
+                            console.log('Bloc diffusé aux pairs (simulé)');
+                        }
+                    } catch (error) {
+                        console.error('Erreur lors du minage:', error);
+                    } finally {
+                        this.mining = false;
+                    }
+                }, 3000); // Simuler 3 secondes de minage
+                
+                return true;
+            }
+            
+            // Vérifier si nous sommes connectés au réseau
+            isConnected() {
+                return this.connected;
+            }
+        }
+
+        // Initialisation de l'application
+        document.addEventListener('DOMContentLoaded', () => {
+            // Éléments DOM
+            const walletIdElement = document.getElementById('walletId');
+            const walletKeyElement = document.getElementById('walletKey');
+            const balanceElement = document.getElementById('balance');
+            const recipientInput = document.getElementById('recipient');
+            const amountInput = document.getElementById('amount');
+            const sendButton = document.getElementById('sendBtn');
+            const blocksContainer = document.getElementById('blocksContainer');
+            const miningAnimation = document.getElementById('miningAnimation');
+            const notificationElement = document.getElementById('notification');
+            const showKeyButton = document.getElementById('showKeyBtn');
+            const exportButton = document.getElementById('exportBtn');
+            const importButton = document.getElementById('importBtn');
+            const peersButton = document.getElementById('peersBtn');
+            const networkStatusElement = document.getElementById('networkStatus');
+            const peersCountElement = document.getElementById('peersCount');
+            
+            // Modals
+            const peersModal = document.getElementById('peersModal');
+            const closePeersModal = document.getElementById('closePeersModal');
+            const peersList = document.getElementById('peersList');
+            
+            const exportModal = document.getElementById('exportModal');
+            const closeExportModal = document.getElementById('closeExportModal');
+            const exportKeyDisplay = document.getElementById('exportKeyDisplay');
+            const copyExportKey = document.getElementById('copyExportKey');
+            const downloadWalletFile = document.getElementById('downloadWalletFile');
+            
+            const importModal = document.getElementById('importModal');
+            const closeImportModal = document.getElementById('closeImportModal');
+            const importKeyInput = document.getElementById('importKeyInput');
+            const importFileInput = document.getElementById('importFileInput');
+            const importWalletBtn = document.getElementById('importWalletBtn');
+            
+            // Variables globales
+            let blockchain = new Blockchain();
+            let wallet = new Wallet();
+            let p2pNetwork;
+            
+            // Initialisation
+            function initialize() {
+                // Essayer de charger le portefeuille depuis le stockage local
+                const storedWallet = localStorage.getItem('wallet');
+                if (storedWallet) {
+                    try {
+                        const walletData = JSON.parse(storedWallet);
+                        wallet.id = walletData.id;
+                        wallet.privateKey = walletData.privateKey;
+                    } catch (e) {
+                        console.error('Erreur lors du chargement du portefeuille:', e);
+                        // Générer un nouveau portefeuille en cas d'erreur
+                        wallet.generate();
+                        saveWallet();
+                    }
+                } else {
+                    // Générer un nouveau portefeuille
+                    wallet.generate();
+                    saveWallet();
+                }
+                
+                // Afficher l'ID du portefeuille
+                walletIdElement.textContent = wallet.id;
+                walletKeyElement.textContent = wallet.privateKey;
+                
+                // Charger la blockchain si elle existe
+                const storedChain = localStorage.getItem('blockchain');
+                if (storedChain) {
+                    try {
+                        const parsedData = JSON.parse(storedChain);
+                        blockchain.chain = parsedData.chain;
+                        blockchain.pendingTransactions = parsedData.pendingTransactions;
+                        blockchain.difficulty = parsedData.difficulty;
+                    } catch (e) {
+                        console.error('Erreur lors du chargement de la blockchain:', e);
+                        // Créer une nouvelle blockchain en cas d'erreur
+                        blockchain = new Blockchain();
+                    }
+                } else {
+                    // Donner des fonds initiaux au nouvel utilisateur
+                    blockchain.createTransaction('Système', wallet.id, 10);
+                    blockchain.minePendingTransactions('system');
+                    saveBlockchain();
+                }
+                
+                // Initialiser le réseau P2P
+                p2pNetwork = new P2PNetwork(
+                    wallet, 
+                    blockchain, 
+                    onChainUpdate, 
+                    onTransactionReceived,
+                    onPeersUpdate
+                );
+                
+                // Mettre à jour l'interface
+                updateUI();
+            }
+            
+            // Callback quand la blockchain est mise à jour
+            function onChainUpdate() {
+                saveBlockchain();
+                updateUI();
+            }
+            
+            // Callback quand une nouvelle transaction est reçue
+            function onTransactionReceived(transaction) {
+                console.log('Nouvelle transaction reçue:', transaction);
+                showNotification(`Nouvelle transaction reçue: ${transaction.amount} tokens de ${transaction.sender.substring(0, 8)}...`);
+                saveBlockchain();
+                updateUI();
+            }
+            
+            // Callback quand la liste des pairs est mise à jour
+            function onPeersUpdate(count, isConnected) {
+                peersCountElement.textContent = count;
+                
+                if (isConnected) {
+                    networkStatusElement.innerHTML = `
+                        <span class="status-indicator status-online"></span>
+                        Connecté
+                    `;
+                } else {
+                    networkStatusElement.innerHTML = `
+                        <span class="status-indicator status-offline"></span>
+                        Déconnecté
+                    `;
+                }
+            }
+            
+            // Sauvegarder le portefeuille dans le stockage local
+            function saveWallet() {
+                localStorage.setItem('wallet', JSON.stringify({
+                    id: wallet.id,
+                    privateKey: wallet.privateKey
+                }));
+            }
+            
+            // Sauvegarder la blockchain dans le stockage local
+            function saveBlockchain() {
+                localStorage.setItem('blockchain', JSON.stringify(blockchain));
+            }
+            
+            // Mettre à jour l'interface utilisateur
+            function updateUI() {
+                // Mettre à jour le solde
+                const balance = blockchain.getBalanceOfAddress(wallet.id);
+                balanceElement.textContent = `${balance.toFixed(2)} tokens`;
+                
+                // Afficher les blocs
+                renderBlocks();
+            }
+            
+            //
