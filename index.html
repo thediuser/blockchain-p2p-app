@@ -566,8 +566,8 @@
         }
 
         // Classe P2PNetwork pour gérer les connexions peer-to-peer
-class P2PNetwork {
-    constructor(wallet, blockchain, onChainUpdate, onTransactionReceived, onPeersUpdate) {
+        class P2PNetwork {
+        constructor(wallet, blockchain, onChainUpdate, onTransactionReceived, onPeersUpdate) {
         this.wallet = wallet;
         this.blockchain = blockchain;
         this.onChainUpdate = onChainUpdate;
@@ -595,10 +595,10 @@ class P2PNetwork {
         
         // Connexion au serveur de signalisation
         this.initSignaling();
-    }
+        }
     
-    // Connexion au serveur de signalisation
-    initSignaling() {
+         // Connexion au serveur de signalisation
+        initSignaling() {
         // Remplacer par l'URL de votre serveur Glitch
         const wsUrl = 'wss://dolomite-succinct-damselfly.glitch.me';
         
@@ -617,9 +617,9 @@ class P2PNetwork {
         };
         
         // ...
-    } catch (e) {
+        } catch (e) {
         console.error('❌ Exception lors de la création du WebSocket:', e);
-    }
+        }
         this.signalingSocket = new WebSocket(wsUrl);
         
         // Gérer les événements du serveur de signalisation
@@ -652,7 +652,7 @@ class P2PNetwork {
             this.connected = false;
             this.onPeersUpdate(0, false);
         };
-    }
+        }
     
     // S'enregistrer auprès du serveur de signalisation
     register() {
@@ -1603,3 +1603,4 @@ class P2PNetwork {
             // Initialize the application
             initialize();
         });
+    </script>
